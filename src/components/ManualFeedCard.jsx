@@ -43,9 +43,7 @@ export default function ManualFeedCard({ onTriggerFeed, lastFedText }) {
               Kirim perintah PWM langsung ke Servo SG90 via ESP32-C3 SuperMini
             </p>
           </div>
-          <div className="p-2 rounded bg-surface-low border border-ice/20 text-ice shrink-0">
-            <SlidersHorizontal className="w-5 h-5" />
-          </div>
+         
         </div>
 
         {/* Pilihan Takaran Pakan */}
@@ -80,7 +78,7 @@ export default function ManualFeedCard({ onTriggerFeed, lastFedText }) {
         {/* Info Sudut & Duty Cycle */}
         <div className="bg-surface-low/80 border border-ice/15 rounded px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
           <div className="flex items-center gap-2 text-ice-text">
-            <RotateCw className="w-3.5 h-3.5 text-ice" />
+             
             <span>
               Sudut Flap: <span className="text-ice font-medium">{selectedPortion.angle}</span> • Durasi Buka:{" "}
               <span className="text-ice font-medium">{selectedPortion.duration}</span>

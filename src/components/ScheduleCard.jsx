@@ -16,7 +16,7 @@ export default function ScheduleCard({ schedule, slotIndex, onToggle, onDelete }
         {/* Kiri: Waktu RTC & Detail Jadwal */}
         <div className="flex items-start gap-4 min-w-0">
           <div className="flex flex-col shrink-0 font-mono">
-            <span className="text-[10px] text-ice-muted">WAKTU_RTC</span>
+            
             <span
               className={`text-2xl md:text-3xl font-semibold tracking-tighter ${
                 isActive ? "text-ice" : "text-ice-muted"

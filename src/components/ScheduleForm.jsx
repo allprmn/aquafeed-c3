@@ -1,24 +1,75 @@
-import { useState } from "react";
-import { Clock, Info, Cpu, Terminal, CheckCircle2 } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Clock, Info, Cpu, Terminal, CheckCircle2, ChevronDown, RotateCw } from "lucide-react";
+
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
+const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
+const QUICK_PRESETS = ["07:00", "12:00", "17:00", "21:00"];
+
+const SERVO_ANGLE_OPTIONS = [
+  {
+    angle: "45°",
+    title: "45°",
+    desc: "Kecil • 5g",
+    duration: "0.8s",
+    grams: 5,
+  },
+  {
+    angle: "90°",
+    title: "90°",
+    desc: "Sedang • 10g",
+    duration: "1.5s",
+    grams: 10,
+  },
+  {
+    angle: "135°",
+    title: "135°",
+    desc: "Lebar • 15g",
+    duration: "2.2s",
+    grams: 15,
+  },
+];
+
+function getWibTimePlusMinutes(offsetMinutes = 0) {
+  const target = new Date(Date.now() + offsetMinutes * 60 * 1000);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(target);
+}
 
 export default function ScheduleForm({ onAddSchedule }) {
-  // Form State (Controlled Inputs)
   const [title, setTitle] = useState("");
-  const [feedTime, setFeedTime] = useState("12:30");
-  const [portionGram, setPortionGram] = useState("15");
+  const [feedTime, setFeedTime] = useState(() => getWibTimePlusMinutes(5));
+  const [servoAngle, setServoAngle] = useState("90°");
   const [notes, setNotes] = useState("");
   const [notifyWebhook, setNotifyWebhook] = useState(true);
 
-  // State Validasi & Feedback Submit
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Fungsi validasi seluruh field
+  const pickerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
+        setIsPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const [selectedHour = "12", selectedMinute = "00"] = feedTime.split(":");
+
   const validate = (values) => {
     const nextErrors = {};
     const trimmedTitle = values.title.trim();
-    const numericPortion = Number(values.portionGram);
 
     if (!trimmedTitle) {
       nextErrors.title = "Nama jadwal wajib diisi.";
@@ -28,16 +79,12 @@ export default function ScheduleForm({ onAddSchedule }) {
       nextErrors.title = "Nama jadwal maksimal 32 karakter.";
     }
 
-    if (!values.feedTime) {
-      nextErrors.feedTime = "Waktu eksekusi wajib dipilih.";
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(values.feedTime)) {
+      nextErrors.feedTime = "Format waktu harus 24 jam (HH:MM WIB).";
     }
 
-    if (values.portionGram === "" || Number.isNaN(numericPortion)) {
-      nextErrors.portionGram = "Takaran pakan wajib diisi dengan angka.";
-    } else if (numericPortion < 1) {
-      nextErrors.portionGram = "Takaran minimal adalah 1 gram.";
-    } else if (numericPortion > 50) {
-      nextErrors.portionGram = "Takaran maksimal adalah 50 gram agar pakan tidak meluap.";
+    if (!SERVO_ANGLE_OPTIONS.some((opt) => opt.angle === values.servoAngle)) {
+      nextErrors.servoAngle = "Pilih salah satu sudut bukaan servo (45°, 90°, atau 135°).";
     }
 
     if (values.notes.length > 120) {
@@ -47,87 +94,99 @@ export default function ScheduleForm({ onAddSchedule }) {
     return nextErrors;
   };
 
-  // Jalankan validasi real-time saat user mengetik
   const handleFieldChange = (field, value) => {
     const nextValues = {
       title,
       feedTime,
-      portionGram,
+      servoAngle,
       notes,
       [field]: value,
     };
 
     if (field === "title") setTitle(value);
     if (field === "feedTime") setFeedTime(value);
-    if (field === "portionGram") setPortionGram(value);
+    if (field === "servoAngle") setServoAngle(value);
     if (field === "notes") setNotes(value);
 
     setTouched((prev) => ({ ...prev, [field]: true }));
     setErrors(validate(nextValues));
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const handleSelectHour = (hour) => {
+    handleFieldChange("feedTime", `${hour}:${selectedMinute}`);
+  };
 
-    const validationErrors = validate({ title, feedTime, portionGram, notes });
+  const handleSelectMinute = (minute) => {
+    handleFieldChange("feedTime", `${selectedHour}:${minute}`);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitError(null);
+
+    const validationErrors = validate({ title, feedTime, servoAngle, notes });
     setErrors(validationErrors);
-    setTouched({ title: true, feedTime: true, portionGram: true, notes: true });
+    setTouched({ title: true, feedTime: true, servoAngle: true, notes: true });
 
     if (Object.keys(validationErrors).length > 0) return;
 
-    const grams = Number(portionGram);
-    // Tentukan sudut dan durasi servo otomatis berdasarkan takaran gram
-    const servoAngle = grams <= 5 ? "45°" : grams <= 20 ? "90°" : "135°";
-    const servoDuration = grams <= 5 ? "0.8s" : grams <= 20 ? "1.5s" : "2.2s";
+    const selectedPreset =
+      SERVO_ANGLE_OPTIONS.find((opt) => opt.angle === servoAngle) || SERVO_ANGLE_OPTIONS[1];
 
-    onAddSchedule({
-      id: `SLOT_${Date.now()}`,
-      title: title.trim(),
-      feedTime,
-      portionGram: grams,
-      servoAngle,
-      servoDuration,
-      notes: notes.trim(),
-      notifyWebhook,
-      isActive: true,
-    });
+    try {
+      setIsSubmitting(true);
+      await onAddSchedule({
+        title: title.trim(),
+        feedTime,
+        portionGram: selectedPreset.grams,
+        servoAngle: selectedPreset.angle,
+        servoDuration: selectedPreset.duration,
+        notes: notes.trim(),
+        notifyWebhook,
+      });
 
-    // Reset form setelah berhasil disimpan
-    setTitle("");
-    setPortionGram("15");
-    setNotes("");
-    setTouched({});
-    setErrors({});
-    setSubmitSuccess(true);
-    setTimeout(() => setSubmitSuccess(false), 3000);
+      setTitle("");
+      setServoAngle("90°");
+      setNotes("");
+      setTouched({});
+      setErrors({});
+      setIsPickerOpen(false);
+      setSubmitSuccess(true);
+      setTimeout(() => setSubmitSuccess(false), 3000);
+    } catch (err) {
+      setSubmitError(err.message || "Gagal menyimpan jadwal ke Supabase.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const portionError = touched.portionGram && errors.portionGram;
-  const hopperImpactPct = ((Number(portionGram || 0) / 2000) * 100).toFixed(2);
+  const activePreset =
+    SERVO_ANGLE_OPTIONS.find((opt) => opt.angle === servoAngle) || SERVO_ANGLE_OPTIONS[1];
 
   return (
     <div className="bg-obsidian rounded-lg border border-ice/20 p-5 md:p-6 shadow-[0_4px_24px_rgba(0,0,0,0.6)]">
       {/* Header Form */}
       <div className="flex items-start justify-between gap-3 pb-4 border-b border-ice/15">
         <div>
-          <span className="font-mono text-[10px] text-ice-muted uppercase tracking-wider">
-            SEC_REG_FORM_V3
-          </span>
           <h2 className="text-lg font-medium text-ice-text tracking-tight">Formulir Jadwal Baru</h2>
           <p className="text-xs text-ice-muted mt-0.5">
-            Parameter waktu RTC dan porsi gram dispenser servo.
+            Parameter waktu WIB (UTC+7) dan sudut bukaan aktuator servo SG90.
           </p>
         </div>
-        <span className="font-mono text-[10px] text-ice bg-surface-low px-2 py-1 rounded border border-ice/30 shrink-0">
-          FORM_ID #04
-        </span>
       </div>
 
-      {/* Notifikasi Sukses Simpan */}
+      {/* Notifikasi Sukses / Error */}
       {submitSuccess && (
         <div className="mt-4 bg-ice/10 border border-ice/40 rounded p-3 flex items-center gap-2 font-mono text-xs text-ice-light">
           <CheckCircle2 className="w-4 h-4 text-ice shrink-0" />
-          <span>Jadwal berhasil ditulis ke memori EEPROM ESP32-C3!</span>
+          <span>Jadwal berhasil disimpan & disinkronkan ke ESP32-C3!</span>
+        </div>
+      )}
+
+      {submitError && (
+        <div className="mt-4 bg-surface-low border border-dashed border-ice-fixed rounded p-3 flex items-center gap-2 font-mono text-xs text-ice-light">
+          <Info className="w-4 h-4 text-ice shrink-0" />
+          <span>{submitError}</span>
         </div>
       )}
 
@@ -139,7 +198,7 @@ export default function ScheduleForm({ onAddSchedule }) {
             <label htmlFor="sched-name" className="text-[11px] text-ice-text uppercase tracking-wide">
               Nama Jadwal <span className="text-ice">*</span>
             </label>
-            <span className="text-[10px] text-ice-muted">VAR_STR({title.length}/32)</span>
+            
           </div>
           <input
             id="sched-name"
@@ -162,69 +221,187 @@ export default function ScheduleForm({ onAddSchedule }) {
           )}
         </div>
 
-        {/* Field 2: Waktu Eksekusi */}
-        <div className="flex flex-col gap-1.5">
+        {/* Field 2: Custom 24-Hour Time Picker (WIB) */}
+        <div className="flex flex-col gap-1.5 relative" ref={pickerRef}>
           <div className="flex items-center justify-between font-mono">
-            <label htmlFor="sched-time" className="text-[11px] text-ice-text uppercase tracking-wide">
+            <label htmlFor="sched-time-btn" className="text-[11px] text-ice-text uppercase tracking-wide">
               Waktu Eksekusi (WIB) <span className="text-ice">*</span>
             </label>
-            <span className="text-[10px] text-ice-muted">RTC_24H_CLOCK</span>
-          </div>
-          <div className="relative flex items-center">
-            <input
-              id="sched-time"
-              type="time"
-              value={feedTime}
-              onChange={(e) => handleFieldChange("feedTime", e.target.value)}
-              className="w-full bg-[#030608] border border-ice/25 focus:border-ice rounded px-3 py-2 text-xs text-ice-text font-mono focus:outline-none transition-all pr-10"
-            />
-            <Clock className="w-4 h-4 absolute right-3 text-ice pointer-events-none" />
-          </div>
-          <p className="font-mono text-[10px] text-ice-muted">
-            Format 24 jam tersinkron dengan NTP server
-          </p>
-        </div>
-
-        {/* Field 3: Takaran Pakan (1–50 gram) */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between font-mono">
-            <label htmlFor="sched-portion" className="text-[11px] text-ice-text uppercase tracking-wide">
-              Takaran Pakan (1–50 gram) <span className="text-ice">*</span>
-            </label>
-            <span className="text-[10px] text-ice-fixed font-semibold">MAX_DISPENSE: 50g</span>
+            
           </div>
 
-          <div className="relative">
-            <input
-              id="sched-portion"
-              type="number"
-              min="1"
-              max="100"
-              value={portionGram}
-              onChange={(e) => handleFieldChange("portionGram", e.target.value)}
-              onBlur={() => setTouched((prev) => ({ ...prev, portionGram: true }))}
-              className={`w-full bg-[#030608] rounded px-3 py-2 text-lg font-semibold font-mono tracking-wider pr-14 focus:outline-none transition-all ${
-                portionError
-                  ? "border-2 border-dashed border-ice-fixed text-ice-light shadow-[inset_0_0_12px_rgba(186,230,253,0.12)]"
-                  : "border border-ice/25 focus:border-ice text-ice-text"
+          <button
+            id="sched-time-btn"
+            type="button"
+            onClick={() => setIsPickerOpen((prev) => !prev)}
+            className={`w-full bg-[#030608] rounded px-3 py-2.5 flex items-center justify-between font-mono transition-all cursor-pointer ${
+              isPickerOpen
+                ? "border border-ice ring-1 ring-ice/40"
+                : "border border-ice/25 hover:border-ice/50"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Clock className="w-4 h-4 text-ice" />
+              <span className="text-base font-semibold text-ice-light tracking-wider">
+                {feedTime}
+              </span>
+              <span className="text-[10px] text-ice bg-ice/10 border border-ice/30 px-1.5 py-0.5 rounded">
+                WIB
+              </span>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-ice transition-transform ${
+                isPickerOpen ? "rotate-180" : ""
               }`}
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[11px] text-ice-fixed pointer-events-none">
-              GRAM
+          </button>
+
+          {isPickerOpen && (
+            <div className="mt-1 bg-[#030608] border border-ice/40 rounded-lg p-3 shadow-[0_12px_32px_rgba(0,0,0,0.9)] z-30 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-1.5 pb-2.5 border-b border-ice/15 font-mono">
+                {QUICK_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      handleFieldChange("feedTime", preset);
+                      setIsPickerOpen(false);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] border transition-colors cursor-pointer ${
+                      feedTime === preset
+                        ? "bg-ice text-black font-bold border-ice"
+                        : "bg-surface-low text-ice-text border-ice/20 hover:border-ice/50"
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleFieldChange("feedTime", getWibTimePlusMinutes(2));
+                    setIsPickerOpen(false);
+                  }}
+                  className="ml-auto px-2 py-1 rounded text-[10px] bg-ice/15 text-ice border border-ice/40 hover:bg-ice/25 transition-colors cursor-pointer"
+                >
+                  +2 Menit (Uji)
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 font-mono">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] text-ice-muted uppercase text-center">
+                    Jam (00–23)
+                  </span>
+                  <div className="h-40 overflow-y-auto border border-ice/15 rounded bg-obsidian p-1 grid grid-cols-3 gap-1">
+                    {HOURS.map((h) => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => handleSelectHour(h)}
+                        className={`py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                          selectedHour === h
+                            ? "bg-ice text-black font-bold"
+                            : "text-ice-text hover:bg-ice/15"
+                        }`}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] text-ice-muted uppercase text-center">
+                    Menit (00–59)
+                  </span>
+                  <div className="h-40 overflow-y-auto border border-ice/15 rounded bg-obsidian p-1 grid grid-cols-3 gap-1">
+                    {MINUTES.map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => handleSelectMinute(m)}
+                        className={`py-1.5 rounded text-xs transition-colors cursor-pointer ${
+                          selectedMinute === m
+                            ? "bg-ice text-black font-bold"
+                            : "text-ice-text hover:bg-ice/15"
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsPickerOpen(false)}
+                className="w-full py-1.5 rounded bg-ice/15 hover:bg-ice/25 border border-ice/40 text-ice font-mono text-[11px] uppercase tracking-wider transition-colors cursor-pointer"
+              >
+                Terapkan Waktu ({feedTime} WIB)
+              </button>
+            </div>
+          )}
+
+          {touched.feedTime && errors.feedTime ? (
+            <p className="font-mono text-[11px] text-ice-light">{errors.feedTime}</p>
+          ) : (
+            <p className="font-mono text-[10px] text-ice-muted">
+              Format 24 jam Asia/Jakarta tersinkron dengan NTP ESP32-C3
+            </p>
+          )}
+        </div>
+
+        {/* Field 3: Pilihan Sudut Servo (3 Opsi) */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between font-mono">
+            <span className="text-[11px] text-ice-text uppercase tracking-wide flex items-center gap-1.5">
+              <RotateCw className="w-3.5 h-3.5 text-ice" />
+              Sudut Bukaan Servo <span className="text-ice">*</span>
             </span>
+            
           </div>
 
-          {/* Inline Validation Alert (Strictly Monochromatic Ice Blue) */}
-          {portionError && (
-            <div className="mt-1 bg-surface-low/80 border border-dashed border-ice-fixed/60 rounded p-2.5 flex items-start gap-2">
-              <Info className="w-4 h-4 text-ice shrink-0 mt-0.5" />
-              <div className="flex flex-col min-w-0">
-                <p className="text-xs text-ice-light font-medium">{errors.portionGram}</p>
-                <span className="font-mono text-[10px] text-ice-muted mt-0.5">
-                  Kapasitas Hopper Terpakai: +{hopperImpactPct}% (Batas aman 50g / batch)
-                </span>
-              </div>
-            </div>
+          <div role="radiogroup" aria-label="Sudut Bukaan Servo" className="grid grid-cols-3 gap-2">
+            {SERVO_ANGLE_OPTIONS.map((option) => {
+              const isSelected = servoAngle === option.angle;
+              return (
+                <button
+                  key={option.angle}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSelected}
+                  onClick={() => handleFieldChange("servoAngle", option.angle)}
+                  className={`flex flex-col items-center justify-center py-2.5 px-2 rounded border font-mono transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-ice/15 border-ice text-ice-light shadow-[0_0_12px_rgba(125,211,252,0.18)]"
+                      : "bg-[#030608] border-ice/25 text-ice-muted hover:border-ice/50 hover:text-ice-text"
+                  }`}
+                >
+                  <span
+                    className={`text-base font-bold tracking-tight ${
+                      isSelected ? "text-ice" : "text-ice-text"
+                    }`}
+                  >
+                    {option.title}
+                  </span>
+                  <span className="text-[10px] mt-0.5">{option.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="font-mono text-[10px] text-ice-muted">
+            Konfigurasi terpilih: Sudut <span className="text-ice">{activePreset.angle}</span> • Durasi buka{" "}
+            <span className="text-ice-light">{activePreset.duration}</span> (Estimasi {activePreset.grams}g)
+          </p>
+
+          {touched.servoAngle && errors.servoAngle && (
+            <p className="font-mono text-[11px] text-ice-light flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-ice shrink-0" />
+              <span>{errors.servoAngle}</span>
+            </p>
           )}
         </div>
 
@@ -249,33 +426,19 @@ export default function ScheduleForm({ onAddSchedule }) {
           )}
         </div>
 
-        {/* Checkbox Webhook / Telegram */}
-        <label className="flex items-center gap-2.5 cursor-pointer select-none pt-1">
-          <input
-            type="checkbox"
-            checked={notifyWebhook}
-            onChange={(e) => setNotifyWebhook(e.target.checked)}
-            className="w-4 h-4 accent-[#7dd3fc] bg-pitch border-ice/50 rounded cursor-pointer"
-          />
-          <span className="text-xs text-ice-text">
-            Kirim notifikasi Telegram / Webhook saat jadwal tereksekusi
-          </span>
-        </label>
-
+      
         {/* Submit Button */}
         <div className="flex flex-col gap-2 pt-1">
           <button
             type="submit"
-            className="w-full h-11 bg-ice hover:bg-ice-fixed active:scale-[0.99] text-black font-mono text-xs font-bold uppercase tracking-wider rounded border border-ice-fixed flex items-center justify-center gap-2 shadow-[0_0_16px_rgba(125,211,252,0.25)] hover:shadow-[0_0_24px_rgba(125,211,252,0.45)] transition-all cursor-pointer"
+            disabled={isSubmitting}
+            className="w-full h-11 bg-ice hover:bg-ice-fixed disabled:opacity-60 active:scale-[0.99] text-black font-mono text-xs font-bold uppercase tracking-wider rounded border border-ice-fixed flex items-center justify-center gap-2 shadow-[0_0_16px_rgba(125,211,252,0.25)] hover:shadow-[0_0_24px_rgba(125,211,252,0.45)] transition-all cursor-pointer"
           >
             <Cpu className="w-4 h-4" />
-            <span>Simpan Jadwal ke ESP32</span>
+            <span>{isSubmitting ? "Menyimpan..." : "Simpan Jadwal ke ESP32"}</span>
           </button>
 
-          <div className="flex items-center justify-center gap-1.5 text-center font-mono text-[10px] text-ice-muted">
-            <Terminal className="w-3 h-3 shrink-0" />
-            <span>Perintah akan ditulis ke slot memori EEPROM sektor 0x04F via REST API</span>
-          </div>
+          
         </div>
       </form>
     </div>

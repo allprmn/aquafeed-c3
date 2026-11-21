@@ -1,114 +1,79 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { feederService } from "../services/feederService";
+import { useFeeder } from "../context/FeederContext";
 
 export function useFeederLogs(itemsPerPage = 6) {
-  // Server State
-  const [allLogs, setAllLogs] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // URL State (?q=...&method=...&status=...&sort=...&page=...)
+  const { logs: rawLogs = [], isLoading, error, refreshAll } = useFeeder();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const searchQuery = searchParams.get("q") || "";
-  const methodFilter = searchParams.get("method") || "all";
-  const statusFilter = searchParams.get("status") || "all";
+  const methodFilter = searchParams.get("method") || "ALL";
+  const statusFilter = searchParams.get("status") || "ALL";
   const sortOrder = searchParams.get("sort") || "newest";
-  const currentPage = Math.max(1, Number(searchParams.get("page")) || 1);
+  const currentPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
 
-  const updateParam = useCallback(
-    (key, value) => {
-      const next = new URLSearchParams(searchParams);
-      const isDefault =
-        !value ||
-        value === "all" ||
-        (key === "sort" && value === "newest") ||
-        (key === "page" && Number(value) === 1);
-
-      if (isDefault) {
-        next.delete(key);
-      } else {
-        next.set(key, String(value));
-      }
-
-      // Reset ke halaman 1 setiap kali filter/search/sort berubah
-      if (key !== "page") {
-        next.delete("page");
-      }
-
-      setSearchParams(next);
-    },
-    [searchParams, setSearchParams]
-  );
-
-  const resetAllFilters = useCallback(() => {
-    setSearchParams({});
-  }, [setSearchParams]);
-
-  const fetchLogs = useCallback(async (options = {}) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await feederService.getFeedingLogs(options);
-      setAllLogs(data);
-    } catch (err) {
-      setError(err.message || "Gagal memuat data riwayat.");
-    } finally {
-      setIsLoading(false);
+  const updateParam = (key, value) => {
+    const next = new URLSearchParams(searchParams);
+    if (
+      !value ||
+      value === "ALL" ||
+      (key === "sort" && value === "newest") ||
+      (key === "page" && Number(value) === 1)
+    ) {
+      next.delete(key);
+    } else {
+      next.set(key, String(value));
     }
-  }, []);
+    if (key !== "page") next.delete("page");
+    setSearchParams(next);
+  };
 
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
+  const resetAllFilters = () => setSearchParams({});
 
-  // Filtering + Sorting
-  const filteredAndSortedLogs = useMemo(() => {
-    const keyword = searchQuery.toLowerCase().trim();
-
-    return allLogs
+  const filteredLogs = useMemo(() => {
+    return [...rawLogs]
       .filter((item) => {
-        const matchSearch =
-          !keyword ||
-          item.id.toLowerCase().includes(keyword) ||
-          item.timeLabel.toLowerCase().includes(keyword) ||
-          item.notes.toLowerCase().includes(keyword);
+        const matchesMethod = methodFilter === "ALL" || item.method === methodFilter;
+        const matchesStatus = statusFilter === "ALL" || item.status === statusFilter;
+        const q = searchQuery.trim().toLowerCase();
+        const matchesSearch =
+          !q ||
+          item.id.toLowerCase().includes(q) ||
+          item.timeLabel.toLowerCase().includes(q) ||
+          item.notes.toLowerCase().includes(q) ||
+          String(item.portionGram).includes(q);
 
-        const matchMethod =
-          methodFilter === "all" || item.method.toLowerCase() === methodFilter.toLowerCase();
-
-        const matchStatus =
-          statusFilter === "all" || item.status.toLowerCase() === statusFilter.toLowerCase();
-
-        return matchSearch && matchMethod && matchStatus;
+        return matchesMethod && matchesStatus && matchesSearch;
       })
       .sort((a, b) => {
-        if (sortOrder === "oldest") return new Date(a.dateIso) - new Date(b.dateIso);
-        if (sortOrder === "portion_desc") return b.portionGram - a.portionGram;
-        if (sortOrder === "temp_desc") return b.waterTemp - a.waterTemp;
-        return new Date(b.dateIso) - new Date(a.dateIso); // newest
-      });
-  }, [allLogs, searchQuery, methodFilter, statusFilter, sortOrder]);
+        const timeA = new Date(a.dateIso).getTime() || 0;
+        const timeB = new Date(b.dateIso).getTime() || 0;
+        const portionA = Number(a.portionGram) || 0;
+        const portionB = Number(b.portionGram) || 0;
 
-  // Pagination
-  const totalItems = filteredAndSortedLogs.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+        if (sortOrder === "oldest") return timeA - timeB;
+        if (sortOrder === "portion_desc") return portionB - portionA || timeB - timeA;
+        if (sortOrder === "portion_asc") return portionA - portionB || timeB - timeA;
+        return timeB - timeA;
+      });
+  }, [rawLogs, searchQuery, methodFilter, statusFilter, sortOrder]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / itemsPerPage));
   const safePage = Math.min(currentPage, totalPages);
 
   const paginatedLogs = useMemo(() => {
     const startIndex = (safePage - 1) * itemsPerPage;
-    return filteredAndSortedLogs.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredAndSortedLogs, safePage, itemsPerPage]);
+    return filteredLogs.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredLogs, safePage, itemsPerPage]);
 
   return {
     logs: paginatedLogs,
-    filteredLogs: filteredAndSortedLogs,
-    totalItems,
-    totalCached: allLogs.length,
+    filteredLogs,
+    totalItems: filteredLogs.length,
+    totalCached: rawLogs.length,
     isLoading,
     error,
-    refetch: fetchLogs,
+    refetch: refreshAll,
     searchQuery,
     methodFilter,
     statusFilter,

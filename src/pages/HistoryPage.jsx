@@ -41,17 +41,12 @@ export default function HistoryPage() {
       {/* Page Header */}
       <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 border-b border-ice/15 pb-4">
         <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-1.5 h-1.5 bg-ice animate-pulse" />
-            <span className="font-mono text-[10px] text-ice-muted tracking-wider uppercase">
-              REST_API // LOG_TELEMETRI_HISTORIS • ESP32-C3 SUPERMINI
-            </span>
-          </div>
+          
           <h1 className="text-2xl md:text-3xl font-semibold text-ice-light tracking-tight">
-            Riwayat Pemberian Pakan & Log Sensor
+            Riwayat Pemberian Pakan
           </h1>
           <p className="text-xs md:text-sm text-ice-muted max-w-2xl">
-            Data historis eksekusi servo mikro-dispenser, rotasi hopper sudut derajat, dan telemetri suhu termal akuarium via REST API endpoint.
+            Data historis eksekusi servo mikro-dispenser, rotasi katup pakan, dan log jadwal otomatis via REST API endpoint.
           </p>
         </div>
 
@@ -98,15 +93,14 @@ export default function HistoryPage() {
         ) : (
           <>
             <div className="w-full overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[760px]">
+              <table className="w-full text-left border-collapse min-w-[640px]">
                 <thead>
                   <tr className="border-b border-ice/15 bg-obsidian/70 text-ice-muted font-mono text-[10px] uppercase tracking-wider">
                     <th className="py-3 px-4">ID Log</th>
                     <th className="py-3 px-4">Waktu Eksekusi</th>
                     <th className="py-3 px-4">Metode</th>
                     <th className="py-3 px-4">Takaran & Sudut</th>
-                    <th className="py-3 px-4">Suhu Air</th>
-                    <th className="py-3 px-4">Sisa Pakan</th>
+                    <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Aksi</th>
                   </tr>
                 </thead>
@@ -137,20 +131,16 @@ export default function HistoryPage() {
                         <span className="text-ice-light font-semibold">{log.portionGram} gram</span>{" "}
                         <span className="text-[11px] text-ice-muted">({log.servoAngle})</span>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-ice">{log.waterTemp}°C</td>
                       <td className="py-3.5 px-4">
-                        <div className="flex flex-col gap-1 w-32 font-mono text-[10px]">
-                          <div className="flex justify-between items-center">
-                            <span className="text-ice-light">{log.feedRemainingPct}%</span>
-                            <span className="text-ice-muted">{log.feedRemainingKg}</span>
-                          </div>
-                          <div className="w-full h-1 bg-obsidian rounded-full overflow-hidden border border-ice/20">
-                            <div
-                              className="h-full bg-ice"
-                              style={{ width: `${log.feedRemainingPct}%` }}
-                            />
-                          </div>
-                        </div>
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded font-mono text-[10px] uppercase border ${
+                            log.status === "Berhasil"
+                              ? "border-ice/40 text-ice bg-ice/5"
+                              : "border-dashed border-ice-muted/50 text-ice-muted bg-obsidian"
+                          }`}
+                        >
+                          {log.status}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <Link

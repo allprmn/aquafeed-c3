@@ -36,9 +36,6 @@ export default function Navbar() {
                 ESP32-C3
               </span>
             </div>
-            <span className="font-mono text-[10px] text-ice-muted truncate">
-              feeder.aldipramana.my.id
-            </span>
           </div>
         </div>
 
