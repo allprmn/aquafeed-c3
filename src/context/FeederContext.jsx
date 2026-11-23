@@ -10,6 +10,7 @@ export function FeederProvider({ children }) {
   const [device, setDevice] = useState(null);
   const [serialLogs, setSerialLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTogglingPump, setIsTogglingPump] = useState(false);
   const [error, setError] = useState(null);
   const lastSeenRef = useRef(null);
 
@@ -120,6 +121,44 @@ export function FeederProvider({ children }) {
     return newLog;
   };
 
+  const pumpActive = Boolean(device?.pump_active);
+
+  const toggleWaterPump = async (targetState) => {
+    const nextState = typeof targetState === "boolean" ? targetState : !pumpActive;
+    const previousState = pumpActive;
+
+    setIsTogglingPump(true);
+    setDevice((prev) => (prev ? { ...prev, pump_active: nextState } : prev));
+
+    try {
+      await feederService.setWaterPumpState(nextState);
+      setSerialLogs((prev) => [
+        ...prev.slice(-79),
+        {
+          id: `web-pump-${Date.now()}`,
+          tag: "[WEB]",
+          message: nextState
+            ? "Perintah NYALAKAN pompa air dikirim ke ESP32-C3..."
+            : "Perintah MATIKAN pompa air dikirim ke ESP32-C3...",
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } catch (err) {
+      setDevice((prev) => (prev ? { ...prev, pump_active: previousState } : prev));
+      setSerialLogs((prev) => [
+        ...prev.slice(-79),
+        {
+          id: `err-pump-${Date.now()}`,
+          tag: "[ERR]",
+          message: `Gagal mengubah status pompa: ${err.message}`,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } finally {
+      setIsTogglingPump(false);
+    }
+  };
+
   const addSchedule = async (payload) => {
     const created = await feederService.createSchedule(payload);
     setSchedules((prev) =>
@@ -159,9 +198,12 @@ export function FeederProvider({ children }) {
         isLoading,
         error,
         todayStats,
+        pumpActive,
+        isTogglingPump,
         refreshAll,
         clearSerialLogs,
         triggerManualFeed,
+        toggleWaterPump,
         addSchedule,
         toggleSchedule,
         deleteSchedule,

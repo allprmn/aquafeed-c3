@@ -3,8 +3,8 @@ import { SlidersHorizontal, RotateCw, UtensilsCrossed, Clock, Loader2, CheckCirc
 
 const PORTION_OPTIONS = [
   { grams: 5, label: "Kecil (5g)", angle: "45°", duration: "0.8 detik", duty: "5.2% (1040µs)" },
-  { grams: 10, label: "Sedang (10g)", angle: "90°", duration: "1.5 detik", duty: "7.5% (1500µs)" },
-  { grams: 15, label: "Besar (15g)", angle: "135°", duration: "2.2 detik", duty: "9.8% (1960µs)" },
+  { grams: 10, label: "Sedang (10g)", angle: "60°", duration: "1.5 detik", duty: "7.5% (1500µs)" },
+  { grams: 15, label: "Besar (15g)", angle: "90°", duration: "2.2 detik", duty: "9.8% (1960µs)" },
 ];
 
 export default function ManualFeedCard({ onTriggerFeed, lastFedText }) {

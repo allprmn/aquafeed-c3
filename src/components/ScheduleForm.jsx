@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Clock, Info, Cpu, Terminal, CheckCircle2, ChevronDown, RotateCw } from "lucide-react";
+import { Clock, Info, Cpu, CheckCircle2, ChevronDown, RotateCw } from "lucide-react";
 
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
 const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
@@ -14,15 +14,15 @@ const SERVO_ANGLE_OPTIONS = [
     grams: 5,
   },
   {
-    angle: "90°",
-    title: "90°",
+    angle: "60°",
+    title: "60°",
     desc: "Sedang • 10g",
     duration: "1.5s",
     grams: 10,
   },
   {
-    angle: "135°",
-    title: "135°",
+    angle: "90°",
+    title: "90°",
     desc: "Lebar • 15g",
     duration: "2.2s",
     grams: 15,
@@ -42,9 +42,8 @@ function getWibTimePlusMinutes(offsetMinutes = 0) {
 export default function ScheduleForm({ onAddSchedule }) {
   const [title, setTitle] = useState("");
   const [feedTime, setFeedTime] = useState(() => getWibTimePlusMinutes(5));
-  const [servoAngle, setServoAngle] = useState("90°");
+  const [servoAngle, setServoAngle] = useState("60°");
   const [notes, setNotes] = useState("");
-  const [notifyWebhook, setNotifyWebhook] = useState(true);
 
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -84,7 +83,7 @@ export default function ScheduleForm({ onAddSchedule }) {
     }
 
     if (!SERVO_ANGLE_OPTIONS.some((opt) => opt.angle === values.servoAngle)) {
-      nextErrors.servoAngle = "Pilih salah satu sudut bukaan servo (45°, 90°, atau 135°).";
+      nextErrors.servoAngle = "Pilih salah satu sudut bukaan servo (45°, 60°, atau 90°).";
     }
 
     if (values.notes.length > 120) {
@@ -142,11 +141,11 @@ export default function ScheduleForm({ onAddSchedule }) {
         servoAngle: selectedPreset.angle,
         servoDuration: selectedPreset.duration,
         notes: notes.trim(),
-        notifyWebhook,
+        notifyWebhook: true,
       });
 
       setTitle("");
-      setServoAngle("90°");
+      setServoAngle("60°");
       setNotes("");
       setTouched({});
       setErrors({});
@@ -198,7 +197,6 @@ export default function ScheduleForm({ onAddSchedule }) {
             <label htmlFor="sched-name" className="text-[11px] text-ice-text uppercase tracking-wide">
               Nama Jadwal <span className="text-ice">*</span>
             </label>
-            
           </div>
           <input
             id="sched-name"
@@ -227,7 +225,6 @@ export default function ScheduleForm({ onAddSchedule }) {
             <label htmlFor="sched-time-btn" className="text-[11px] text-ice-text uppercase tracking-wide">
               Waktu Eksekusi (WIB) <span className="text-ice">*</span>
             </label>
-            
           </div>
 
           <button
@@ -353,14 +350,13 @@ export default function ScheduleForm({ onAddSchedule }) {
           )}
         </div>
 
-        {/* Field 3: Pilihan Sudut Servo (3 Opsi) */}
+        {/* Field 3: Pilihan Sudut Servo (3 Opsi: 45°, 60°, 90°) */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between font-mono">
             <span className="text-[11px] text-ice-text uppercase tracking-wide flex items-center gap-1.5">
               <RotateCw className="w-3.5 h-3.5 text-ice" />
               Sudut Bukaan Servo <span className="text-ice">*</span>
             </span>
-            
           </div>
 
           <div role="radiogroup" aria-label="Sudut Bukaan Servo" className="grid grid-cols-3 gap-2">
@@ -426,7 +422,6 @@ export default function ScheduleForm({ onAddSchedule }) {
           )}
         </div>
 
-      
         {/* Submit Button */}
         <div className="flex flex-col gap-2 pt-1">
           <button
@@ -437,8 +432,6 @@ export default function ScheduleForm({ onAddSchedule }) {
             <Cpu className="w-4 h-4" />
             <span>{isSubmitting ? "Menyimpan..." : "Simpan Jadwal ke ESP32"}</span>
           </button>
-
-          
         </div>
       </form>
     </div>

@@ -82,7 +82,7 @@ function mapScheduleRow(row) {
 }
 
 export const feederService = {
-async getSerialLogs(limit = 40) {
+  async getSerialLogs(limit = 40) {
     const { data, error } = await supabase
       .from("feeder_serial_logs")
       .select("*")
@@ -162,6 +162,15 @@ async getSerialLogs(limit = 40) {
 
     if (logError) throw new Error(logError.message);
     return mapLogRow(data);
+  },
+
+  async setWaterPumpState(isActive) {
+    const { error } = await supabase
+      .from("feeder_device")
+      .update({ pump_active: isActive })
+      .eq("id", DEVICE_ID);
+
+    if (error) throw new Error(error.message);
   },
 
   async getSchedules() {

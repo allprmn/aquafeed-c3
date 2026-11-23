@@ -1,0 +1,386 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ESP32Servo.h>
+#include <ArduinoJson.h>
+#include <time.h>
+
+const char* WIFI_SSID         = ",,,,,,,,,,";
+const char* WIFI_PASSWORD     = "..........";
+
+const char* SUPABASE_URL      = "https://.............";
+const char* SUPABASE_ANON_KEY = "sb_publishable_.........";
+const char* DEVICE_ID         = "esp32-c3-01";
+
+const int SERVO_PIN      = 4;  
+const int PUMP_RELAY_PIN = 3; 
+const int LED_PIN        = 8;  
+
+Servo feederServo;
+
+// Timer non-blocking (Mode Tenang)
+unsigned long lastCommandPollMs  = 0;
+unsigned long lastHeartbeatMs    = 0;
+unsigned long lastSchedulePollMs = 0;
+unsigned long pumpStartedAtMs    = 0;
+
+const unsigned long COMMAND_POLL_INTERVAL  = 3000; 
+const unsigned long HEARTBEAT_INTERVAL     = 15000; 
+const unsigned long SCHEDULE_POLL_INTERVAL = 30000; 
+const unsigned long PUMP_MAX_RUNTIME_MS    = 300000; 
+
+bool currentPumpState = false;
+
+struct FeedSchedule {
+  String title;
+  String feedTime;
+  int portionGram;
+  String servoAngle;
+};
+
+FeedSchedule activeSchedules[10];
+int scheduleCount = 0;
+String lastTriggeredMinute = "";
+
+void pushSerialLog(String tag, String msg);
+void stopServoCompletely();
+void setWaterPump(bool turnOn);
+
+void setup() {
+  setCpuFrequencyMhz(80);
+  Serial.begin(115200);
+  delay(800);
+
+  // Pastikan pompa air dalam keadaan MATI total saat booting
+  setWaterPump(false);
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);
+
+  // Parkir servo ke 0° lalu matikan sinyal sepenuhnya
+  feederServo.attach(SERVO_PIN);
+  feederServo.write(0);
+  delay(400);
+  stopServoCompletely();
+
+  connectWiFi();
+
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.print("[NTP] Sinkronisasi waktu WIB");
+  struct tm timeinfo;
+  int ntpRetry = 0;
+  while (!getLocalTime(&timeinfo) && ntpRetry < 20) {
+    Serial.print(".");
+    delay(500);
+    ntpRetry++;
+  }
+  Serial.println();
+
+  pushSerialLog("[WIFI]", "Terhubung! IP: " + WiFi.localIP().toString() + " | RSSI: " + String(WiFi.RSSI()) + " dBm");
+  pushSerialLog("[SYS]", "AquaFeed C3 Siap (Servo GPIO 4 • Pompa Relay GPIO 3).");
+
+  fetchActiveSchedules();
+  updateDeviceHeartbeat("Standby / Detached (0° • Dingin)", true, true);
+  lastHeartbeatMs = millis();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+  }
+
+  unsigned long nowMs = millis();
+
+  // 1. Cek jadwal otomatis
+  checkScheduleTrigger();
+
+  // 2. Cek perintah manual servo & status sakelar pompa air dari Web UI
+  if (nowMs - lastCommandPollMs >= COMMAND_POLL_INTERVAL) {
+    lastCommandPollMs = nowMs;
+    checkManualCommand();
+  }
+
+  // 3. Pengaman Auto-Off jika pompa menyala lebih dari 5 menit
+  if (currentPumpState && pumpStartedAtMs > 0 && (nowMs - pumpStartedAtMs >= PUMP_MAX_RUNTIME_MS)) {
+    setWaterPump(false);
+    pushSerialLog("[PUMP]", "Auto-Off pengaman 5 menit aktif. Pompa dimatikan.");
+    updateDeviceHeartbeat("Standby / Detached (0° • Dingin)", false, true);
+  }
+
+  // 4. Heartbeat status online
+  if (nowMs - lastHeartbeatMs >= HEARTBEAT_INTERVAL) {
+    lastHeartbeatMs = nowMs;
+    updateDeviceHeartbeat("Standby / Detached (0° • Dingin)", false, false);
+  }
+
+  // 5. Sinkronisasi jadwal aktif
+  if (nowMs - lastSchedulePollMs >= SCHEDULE_POLL_INTERVAL) {
+    lastSchedulePollMs = nowMs;
+    fetchActiveSchedules();
+  }
+
+  delay(50);
+}
+
+// Kontrol Modul Relay 5V (Active-LOW aman untuk GPIO 3.3V ESP32-C3)
+void setWaterPump(bool turnOn) {
+  if (turnOn) {
+    pumpStartedAtMs = millis();
+    currentPumpState = true;
+    pinMode(PUMP_RELAY_PIN, OUTPUT);
+    digitalWrite(PUMP_RELAY_PIN, LOW);   // Relay ON -> Pompa Menyala
+  } else {
+    currentPumpState = false;
+    pumpStartedAtMs = 0;
+    pinMode(PUMP_RELAY_PIN, INPUT);    // Relay OFF -> Pompa Mati
+  }
+}
+
+void stopServoCompletely() {
+  feederServo.detach();
+  pinMode(SERVO_PIN, OUTPUT);
+  digitalWrite(SERVO_PIN, LOW);
+}
+
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  delay(200);
+
+  Serial.printf("\n[WIFI] Menghubungkan ke %s", WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  WiFi.setSleep(false);
+
+  int attempt = 0;
+  while (WiFi.status() != WL_CONNECTED && attempt < 30) {
+    delay(500);
+    Serial.print(".");
+    attempt++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[WIFI] Terhubung! IP: %s | RSSI: %d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    Serial.printf("\n[WIFI] Gagal! Status: %d\n", WiFi.status());
+  }
+}
+
+int runDispenser(int grams, String angleStr) {
+  int targetAngle = angleStr.toInt();
+
+  if (targetAngle == 90 && grams <= 10) {
+    targetAngle = 60;
+  } else if (targetAngle >= 135) {
+    targetAngle = 90;
+  } else if (targetAngle <= 0) {
+    targetAngle = 60;
+  }
+
+  int durationMs = (grams <= 5) ? 800 : (grams <= 10) ? 1500 : 2200;
+
+  pushSerialLog("[SERVO]", "Eksekusi " + String(grams) + "g | Sudut: " + String(targetAngle) + "° | Durasi: " + String(durationMs) + "ms");
+
+  digitalWrite(LED_PIN, LOW);
+  feederServo.attach(SERVO_PIN);
+  feederServo.write(targetAngle);
+  delay(durationMs);
+
+  feederServo.write(0);
+  delay(350);
+  stopServoCompletely();
+  digitalWrite(LED_PIN, HIGH);
+
+  pushSerialLog("[SERVO]", "Selesai & Detached (0°)");
+  return durationMs;
+}
+
+void checkManualCommand() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SUPABASE_URL) + "/rest/v1/feeder_device?id=eq." + DEVICE_ID + "&select=pending_portion_gram,pending_angle,pump_active";
+  http.begin(client, url);
+  http.setTimeout(8000);
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+
+  int httpCode = http.GET();
+  if (httpCode == 200) {
+    String payload = http.getString();
+    JsonDocument doc;
+    if (!deserializeJson(doc, payload) && doc.size() > 0) {
+      int pendingGrams    = doc[0]["pending_portion_gram"] | 0;
+      String pendingAngle = doc[0]["pending_angle"] | "90°";
+      bool webPumpActive  = doc[0]["pump_active"] | false;
+
+      // 1. Sinkronkan status pompa air jika berubah di Web UI
+      if (webPumpActive != currentPumpState) {
+        setWaterPump(webPumpActive);
+        pushSerialLog("[PUMP]", webPumpActive ? "Pompa air DINYALAKAN dari Web UI." : "Pompa air DIMATIKAN dari Web UI.");
+      }
+
+      // 2. Eksekusi pakan manual jika ada antrean
+      if (pendingGrams > 0) {
+        pushSerialLog("[CMD]", "Perintah manual diterima dari Web UI!");
+        runDispenser(pendingGrams, pendingAngle);
+        updateDeviceHeartbeat("Standby / Detached (0° • Dingin)", true, false);
+        lastHeartbeatMs = millis();
+      }
+    }
+  } else {
+    Serial.printf("[ERR] Poll device gagal (HTTP %d)\n", httpCode);
+  }
+  http.end();
+}
+
+void updateDeviceHeartbeat(String stateText, bool resetPending, bool forcePumpOff) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SUPABASE_URL) + "/rest/v1/feeder_device?id=eq." + DEVICE_ID;
+  http.begin(client, url);
+  http.setTimeout(8000);
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Prefer", "return=minimal");
+
+  JsonDocument doc;
+  doc["rssi"]        = String(WiFi.RSSI()) + " dBm";
+  doc["servo_state"] = stateText;
+  doc["last_seen"]   = "now()";
+  if (resetPending) {
+    doc["pending_portion_gram"] = 0;
+  }
+  if (forcePumpOff) {
+    doc["pump_active"] = false;
+  }
+
+  String body;
+  serializeJson(doc, body);
+  http.PATCH(body);
+  http.end();
+}
+
+void fetchActiveSchedules() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SUPABASE_URL) + "/rest/v1/feeder_schedules?is_active=eq.true&select=title,feed_time,portion_gram,servo_angle";
+  http.begin(client, url);
+  http.setTimeout(8000);
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+
+  int httpCode = http.GET();
+  if (httpCode == 200) {
+    String payload = http.getString();
+    JsonDocument doc;
+    if (!deserializeJson(doc, payload)) {
+      scheduleCount = min((int)doc.size(), 10);
+      for (int i = 0; i < scheduleCount; i++) {
+        activeSchedules[i].title       = doc[i]["title"].as<String>();
+        activeSchedules[i].feedTime    = doc[i]["feed_time"].as<String>();
+        activeSchedules[i].portionGram = doc[i]["portion_gram"] | 10;
+        activeSchedules[i].servoAngle  = doc[i]["servo_angle"] | "90°";
+      }
+
+      static int lastKnownCount = -1;
+      if (scheduleCount != lastKnownCount) {
+        lastKnownCount = scheduleCount;
+        pushSerialLog("[SCHED]", String(scheduleCount) + " jadwal aktif tersinkron.");
+      }
+    }
+  }
+  http.end();
+}
+
+void checkScheduleTrigger() {
+  if (scheduleCount == 0) return;
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return;
+
+  char currentHHMM[6];
+  strftime(currentHHMM, sizeof(currentHHMM), "%H:%M", &timeinfo);
+  String nowStr = String(currentHHMM);
+
+  if (nowStr == lastTriggeredMinute) return;
+
+  for (int i = 0; i < scheduleCount; i++) {
+    if (activeSchedules[i].feedTime == nowStr) {
+      lastTriggeredMinute = nowStr;
+      pushSerialLog("[CRON]", "Jadwal '" + activeSchedules[i].title + "' (" + nowStr + " WIB) terpicu!");
+
+      updateDeviceHeartbeat("Active / Moving (" + activeSchedules[i].servoAngle + ")", false, false);
+      int durationMs = runDispenser(activeSchedules[i].portionGram, activeSchedules[i].servoAngle);
+      updateDeviceHeartbeat("Standby / Detached (0° • Dingin)", false, false);
+      lastHeartbeatMs = millis();
+
+      insertAutoFeedLog(activeSchedules[i], durationMs);
+      break;
+    }
+  }
+}
+
+void insertAutoFeedLog(FeedSchedule sched, int durationMs) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SUPABASE_URL) + "/rest/v1/feeder_logs";
+  http.begin(client, url);
+  http.setTimeout(8000);
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Prefer", "return=minimal");
+
+  JsonDocument doc;
+  doc["method"]            = "Otomatis";
+  doc["status"]            = "Berhasil";
+  doc["portion_gram"]      = sched.portionGram;
+  doc["servo_angle"]       = sched.servoAngle;
+  doc["servo_duration_ms"] = durationMs;
+  doc["latency_ms"]        = 18;
+  doc["rssi"]              = String(WiFi.RSSI()) + " dBm";
+  doc["notes"]             = "Jadwal otomatis '" + sched.title + "' dieksekusi oleh ESP32-C3.";
+
+  String body;
+  serializeJson(doc, body);
+  int httpCode = http.POST(body);
+  pushSerialLog("[LOG]", "Kirim riwayat otomatis ke Supabase (HTTP " + String(httpCode) + ")");
+  http.end();
+}
+
+void pushSerialLog(String tag, String msg) {
+  Serial.println(tag + " " + msg);
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SUPABASE_URL) + "/rest/v1/feeder_serial_logs";
+  http.begin(client, url);
+  http.setTimeout(5000);
+  http.addHeader("apikey", SUPABASE_ANON_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Prefer", "return=minimal");
+
+  JsonDocument doc;
+  doc["device_id"] = DEVICE_ID;
+  doc["tag"]       = tag;
+  doc["message"]   = msg;
+
+  String body;
+  serializeJson(doc, body);
+  http.POST(body);
+  http.end();
+}

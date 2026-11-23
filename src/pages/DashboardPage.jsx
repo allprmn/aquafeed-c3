@@ -6,6 +6,7 @@ import DeviceStatusCard from "../components/DeviceStatusCard";
 import TelemetryCard from "../components/TelemetryCard";
 import RecentActivityTable from "../components/RecentActivityTable";
 import SerialMonitorCard from "../components/SerialMonitorCard";
+import WaterPumpControlCard from "../components/WaterPumpControlCard";
 
 export default function DashboardPage() {
   const { logs, schedules, device, serialLogs, todayStats, triggerManualFeed, clearSerialLogs } = useFeeder();
@@ -101,6 +102,8 @@ export default function DashboardPage() {
         />
       </section>
 
+       <WaterPumpControlCard/>
+
       {/* Baris 2 Kartu KPI Utama */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TelemetryCard title="TOTAL PAKAN HARI INI" value={todayStats.todayGrams} unit="gram" icon={Scale}>
@@ -136,6 +139,8 @@ export default function DashboardPage() {
           </div>
         </TelemetryCard>
       </section>
+
+     
 
       {/* Tabel Aktivitas Terbaru */}
       <RecentActivityTable logs={recentFourLogs} />
